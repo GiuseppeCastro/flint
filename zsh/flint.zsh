@@ -59,6 +59,12 @@ add-zsh-hook precmd _flint_precmd
 _flint_update_suggestion() {
   [[ $BUFFER == $_flint_last_buffer ]] && return
   _flint_last_buffer=$BUFFER
+  # region_highlight is an array shared with other plugins (e.g.
+  # zsh-syntax-highlighting) — it only ever accumulates entries, so our own
+  # previous span (from the last, now-stale, buffer) must be stripped every
+  # time or it lingers over real text once the buffer changes or the
+  # suggestion is accepted, rendering already-typed characters dim.
+  region_highlight=("${(@)region_highlight:#*fg=$FLINT_SUGGEST_FG}")
   if [[ -z $BUFFER ]]; then
     POSTDISPLAY=""
     return
@@ -90,7 +96,12 @@ _flint_accept_or_forward_char() {
 zle -N _flint_accept_or_forward_char
 
 _flint_accept_or_end_of_line() {
-  if [[ -n $POSTDISPLAY ]]; then
+  # Only treat End as "accept" when the cursor is already at the end of
+  # what's actually typed — otherwise a mid-buffer edit (e.g. after
+  # Left-arrow, or a history recall that didn't move the cursor) would jump
+  # to the end AND silently swallow the ghost suggestion instead of just
+  # moving to the real end of line.
+  if [[ -n $POSTDISPLAY && $CURSOR -eq ${#BUFFER} ]]; then
     BUFFER+="$POSTDISPLAY"
     CURSOR=${#BUFFER}
     POSTDISPLAY=""
@@ -102,7 +113,7 @@ _flint_accept_or_end_of_line() {
 zle -N _flint_accept_or_end_of_line
 
 _flint_accept_word() {
-  if [[ -n $POSTDISPLAY ]]; then
+  if [[ -n $POSTDISPLAY && $CURSOR -eq ${#BUFFER} ]]; then
     local rest="$POSTDISPLAY"
     if [[ $rest =~ '^([[:space:]]*[^[:space:]]+)' ]]; then
       local word="$match[1]"

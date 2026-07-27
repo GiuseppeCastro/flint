@@ -168,7 +168,7 @@ fn redraw(
     write!(
         out,
         "flint search> {}",
-        truncate(query, cols.saturating_sub(14))
+        truncate(&flatten_control_chars(query), cols.saturating_sub(14))
     )?;
     let mut lines = 1u16;
 
@@ -188,16 +188,28 @@ fn redraw(
                 terminal::Clear(terminal::ClearType::CurrentLine)
             )?;
             let marker = if i == selected { "> " } else { "  " };
+            let single_line = flatten_control_chars(&candidate.command);
             write!(
                 out,
                 "{marker}{}",
-                truncate(&candidate.command, cols.saturating_sub(2))
+                truncate(&single_line, cols.saturating_sub(2))
             )?;
             lines += 1;
         }
     }
     out.flush()?;
     Ok(lines)
+}
+
+/// Recorded commands can contain literal embedded newlines (multi-line
+/// heredocs, `for` loops) or other control bytes. Rendering those raw would
+/// move the real cursor onto rows this UI's redraw math doesn't know about,
+/// corrupting the display on the next keystroke — so every control
+/// character becomes a single space before anything else touches the text.
+fn flatten_control_chars(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -209,5 +221,30 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let take = max.saturating_sub(1);
         format!("{}…", s.chars().take(take).collect::<String>())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flatten_control_chars_replaces_newlines_and_escapes() {
+        assert_eq!(
+            flatten_control_chars("for i in 1 2; do\necho $i\ndone"),
+            "for i in 1 2; do echo $i done"
+        );
+        assert_eq!(flatten_control_chars("git status"), "git status");
+        assert_eq!(
+            flatten_control_chars("printf '\\x1b[31m'"),
+            "printf '\\x1b[31m'"
+        );
+    }
+
+    #[test]
+    fn truncate_respects_char_count_not_byte_count() {
+        assert_eq!(truncate("hello", 10), "hello");
+        assert_eq!(truncate("hello world", 5), "hell…");
+        assert_eq!(truncate("", 5), "");
     }
 }

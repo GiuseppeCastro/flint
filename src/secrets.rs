@@ -16,7 +16,11 @@ fn builtin_patterns() -> &'static [Regex] {
             r"(?i)\bbearer\s+[a-z0-9\-_.=]{10,}",                  // Bearer tokens
             r"(?i)authorization\s*:\s*\S+",                        // Authorization: header
             r"(?i)--(password|passwd|pass)(=|\s+)\S+",             // long-form password flags
-            r"-p[A-Za-z0-9!@#$%^&*()_+=\-]{3,}(\s|$)",             // mysql/psql -pSECRET (no space)
+            // mysql/psql -pSECRET (no space): the leading (?:^|\s) boundary
+            // and dropping '-' from the char class matter — without them
+            // this used to match "-permissions" inside "--bypass-permissions"
+            // or "-prod" inside "--prod", silently dropping ordinary commands.
+            r"(?:^|\s)-p[A-Za-z0-9!@#$%^&*()_+=]{3,}(?:\s|$)",
             r"(?i)[a-z0-9_]*(secret|token|passwd|password|api_key|apikey|access_key|private_key)[a-z0-9_]*\s*=\s*\S+",
             r"[a-zA-Z][a-zA-Z0-9+.\-]*://[^/\s:@]+:[^/\s@]+@",     // scheme://user:pass@host
             r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}", // JWT-shaped token
@@ -107,6 +111,25 @@ mod tests {
         assert!(!scanner().is_sensitive("docker run -p 8080:80 nginx"));
         assert!(!scanner().is_sensitive("ls -la /tmp"));
         assert!(!scanner().is_sensitive("kubectl get pods -n prod"));
+    }
+
+    #[test]
+    fn hyphenated_long_flags_ending_in_p_word_are_not_flagged() {
+        // Regression: the mysql/psql `-pSECRET` pattern used to have no
+        // boundary check before `-p` and allowed '-' in its char class, so
+        // it matched "-permissions"/"-prod" mid-word and silently dropped
+        // these commands from being recorded at all.
+        assert!(!scanner().is_sensitive("claude --bypass-permissions"));
+        assert!(!scanner().is_sensitive("claude --dangerously-skip-permissions"));
+        assert!(!scanner().is_sensitive("npm run build --prod"));
+        assert!(!scanner().is_sensitive("terraform apply --auto-approve"));
+    }
+
+    #[test]
+    fn password_flag_pattern_does_not_match_unrelated_substring() {
+        // "--bypass=foo" contains "pass" as a substring but not as its own
+        // "--pass"/"--password" token, so it must not be flagged.
+        assert!(!scanner().is_sensitive("deploy --bypass=foo"));
     }
 
     #[test]

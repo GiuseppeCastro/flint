@@ -28,6 +28,14 @@ fn spawn_test_shell(zdotdir: &std::path::Path) -> rexpect::session::PtySession {
              export FLINT_DATA_DIR={zdotdir}/.flint_data\n\
              docker() {{ :; }}\n\
              eval \"$(flint init zsh)\"\n\
+             \n\
+             # Test-only instrumentation (not part of flint itself): dumps\n\
+             # region_highlight's length and the current BUFFER so tests can\n\
+             # assert on ZLE state that isn't otherwise observable from a PTY.\n\
+             _test_dump_state() {{ print -r -- \"STATE:${{#region_highlight}}:$BUFFER\" >> {zdotdir}/test_state.log }}\n\
+             zle -N _test_dump_state\n\
+             bindkey '^T' _test_dump_state\n\
+             \n\
              echo ZSHRC-DONE\n",
             zdotdir = zdotdir.display()
         ),
@@ -39,7 +47,12 @@ fn spawn_test_shell(zdotdir: &std::path::Path) -> rexpect::session::PtySession {
     cmd.env("ZDOTDIR", zdotdir);
     cmd.env("HOME", zdotdir);
     cmd.env("PATH", path);
-    cmd.env("TERM", "xterm");
+    // Plain "xterm" doesn't support color index 8+, so zsh silently
+    // downgrades `fg=8` region_highlight entries to "none" — masking the
+    // exact state these tests assert on. Real terminals overwhelmingly
+    // report 256-color support, so match that instead of the more limited
+    // default.
+    cmd.env("TERM", "xterm-256color");
 
     let mut session = spawn_command(cmd, Some(5_000)).expect("failed to spawn zsh under pty");
     session
@@ -95,6 +108,93 @@ fn accepting_suggestion_with_right_arrow_fills_buffer() {
     session.send_line("").unwrap();
     session.exp_string("TESTPROMPT$ ").unwrap();
 
+    session.send_line("exit").unwrap();
+}
+
+/// Sends Ctrl-T (bound in the test .zshrc to dump `${#region_highlight}`
+/// and `$BUFFER`) and returns the freshly appended `(highlight_count,
+/// buffer)` line from the log.
+fn dump_state(
+    session: &mut rexpect::session::PtySession,
+    log_path: &std::path::Path,
+) -> (usize, String) {
+    session.send_control('t').unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    let contents = std::fs::read_to_string(log_path).unwrap_or_default();
+    let last = contents.lines().last().expect("no STATE line logged yet");
+    let rest = last.strip_prefix("STATE:").expect("malformed STATE line");
+    let (count, buffer) = rest.split_once(':').unwrap();
+    (count.parse().unwrap(), buffer.to_string())
+}
+
+#[test]
+fn region_highlight_never_accumulates_stale_entries() {
+    // Regression: region_highlight was append-only in the zsh integration,
+    // so every recomputed ghost suggestion left the *previous* one's dim
+    // span behind, eventually painting real typed text gray.
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = spawn_test_shell(dir.path());
+    let log_path = dir.path().join("test_state.log");
+
+    for _ in 0..3 {
+        session.send_line("git status").unwrap();
+        session.exp_string("TESTPROMPT$ ").unwrap();
+    }
+    std::thread::sleep(Duration::from_millis(300));
+
+    for ch in "git status".chars() {
+        session.send(&ch.to_string()).unwrap();
+        session.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+        let (count, _) = dump_state(&mut session, &log_path);
+        assert!(
+            count <= 1,
+            "region_highlight grew to {count} entries mid-typing"
+        );
+    }
+
+    session.send_control('u').unwrap();
+    session.send_line("exit").unwrap();
+}
+
+#[test]
+fn end_key_does_not_swallow_suggestion_when_cursor_not_at_end() {
+    // Regression: End/Ctrl-E accepted the ghost suggestion unconditionally,
+    // even with the cursor in the middle of the buffer, silently appending
+    // suggested text the user never asked to accept.
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = spawn_test_shell(dir.path());
+    let log_path = dir.path().join("test_state.log");
+
+    for _ in 0..3 {
+        session.send_line("git status --verbose").unwrap();
+        session.exp_string("TESTPROMPT$ ").unwrap();
+    }
+    std::thread::sleep(Duration::from_millis(300));
+
+    session.send("git status").unwrap();
+    session.flush().unwrap();
+    session
+        .exp_string("--verbose")
+        .expect("expected a ghost suggestion after 'git status'");
+
+    for _ in 0..3 {
+        session.send("\x1b[D").unwrap(); // Left arrow: move cursor off the end
+    }
+    session.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    session.send("\x05").unwrap(); // Ctrl-E / End
+    session.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    let (_, buffer) = dump_state(&mut session, &log_path);
+    assert_eq!(
+        buffer, "git status",
+        "End must move to the real end of line, not silently accept the ghost suggestion"
+    );
+
+    session.send_control('u').unwrap();
     session.send_line("exit").unwrap();
 }
 
