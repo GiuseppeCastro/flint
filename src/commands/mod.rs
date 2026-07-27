@@ -1,0 +1,10 @@
+pub mod clear;
+pub mod doctor;
+pub mod init;
+pub mod record;
+pub mod search;
+pub mod stats;
+pub mod status;
+pub mod suggest;
+pub mod sync;
+pub mod uninstall;
