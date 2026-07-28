@@ -6,14 +6,14 @@ on:
 
 jobs:
   build:
+    # Both targets are built on one macos-14 (Apple Silicon) runner: Apple's
+    # toolchain cross-compiles to x86_64-apple-darwin natively, and GitHub's
+    # Intel (macos-13) hosted runners have had extended capacity outages
+    # that left jobs queued indefinitely.
+    runs-on: macos-14
     strategy:
       matrix:
-        include:
-          - os: macos-14
-            target: aarch64-apple-darwin
-          - os: macos-13
-            target: x86_64-apple-darwin
-    runs-on: ${{ matrix.os }}
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
