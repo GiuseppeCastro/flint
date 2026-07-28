@@ -39,6 +39,10 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    # The default GITHUB_TOKEN is read-only, which makes creating the
+    # release 403; scope the write grant to just this job.
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
