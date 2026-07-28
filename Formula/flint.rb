@@ -13,11 +13,11 @@ class Flint < Formula
   on_macos do
     on_arm do
       url "https://github.com/GiuseppeCastro/flint/releases/download/v#{version}/flint-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_AARCH64_SHA256"
+      sha256 "14b9901546ae446d403dc93e96fca8cb0e174117348a139355924bae9f49a650"
     end
     on_intel do
       url "https://github.com/GiuseppeCastro/flint/releases/download/v#{version}/flint-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_X86_64_SHA256"
+      sha256 "934a7e25d8cc466ba056de6582950beff9e889300545d3ae47dd8e4915a6f668"
     end
   end
 
