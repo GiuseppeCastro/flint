@@ -17,6 +17,7 @@ pub struct Candidate {
 pub struct RankContext {
     pub cwd: Option<String>,
     pub git_root: Option<String>,
+    pub git_branch: Option<String>,
     /// Normalized key of the previously executed command, see `transitions::normalize_key`.
     pub prev_key: Option<String>,
 }
@@ -28,6 +29,8 @@ struct CommandRow {
     accepted_count: i64,
     last_seen: i64,
     last_cwd: Option<String>,
+    last_git_root: Option<String>,
+    last_git_branch: Option<String>,
     repo_count: i64,
 }
 
@@ -39,12 +42,14 @@ fn row_from_query(row: &rusqlite::Row) -> rusqlite::Result<CommandRow> {
         accepted_count: row.get(3)?,
         last_seen: row.get(4)?,
         last_cwd: row.get(5)?,
-        repo_count: row.get(6)?,
+        last_git_root: row.get(6)?,
+        last_git_branch: row.get(7)?,
+        repo_count: row.get(8)?,
     })
 }
 
 const SELECT_COLUMNS: &str = "cs.command, cs.total_count, cs.success_count, cs.accepted_count, \
-     cs.last_seen, cs.last_cwd, COALESCE(crs.count, 0)";
+     cs.last_seen, cs.last_cwd, cs.last_git_root, cs.last_git_branch, COALESCE(crs.count, 0)";
 
 fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\")
@@ -132,6 +137,19 @@ fn score_row(
         _ => 0.0,
     };
     let same_repo = ((row.repo_count + 1) as f64).ln();
+    let same_branch = match (
+        &ctx.git_root,
+        &ctx.git_branch,
+        &row.last_git_root,
+        &row.last_git_branch,
+    ) {
+        (Some(current_root), Some(current_branch), Some(last_root), Some(last_branch))
+            if current_root == last_root && current_branch == last_branch =>
+        {
+            1.0
+        }
+        _ => 0.0,
+    };
     let transition = transitions.get(&row.command).copied().unwrap_or(0.0);
 
     Some(
@@ -141,6 +159,7 @@ fn score_row(
             + weights.recency * recency_component(row.last_seen, now)
             + weights.same_cwd * same_cwd
             + weights.same_repo * same_repo
+            + weights.same_branch * same_branch
             + weights.transition * transition
             + weights.success_rate * success_component(row.success_count, row.total_count)
             + weights.acceptance * acceptance_component(row.accepted_count, row.total_count),
@@ -294,6 +313,90 @@ mod tests {
         let weights = RankWeights::default();
         let results = search(&conn, "docker co", &ctx, &weights, 10).unwrap();
         assert_eq!(results[0].command, "docker compose exec postgres psql");
+    }
+
+    fn seed_git_context(
+        conn: &Connection,
+        command: &str,
+        last_seen: i64,
+        git_root: &str,
+        git_branch: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO command_stats (command, total_count, success_count, accepted_count, first_seen, last_seen, last_git_root, last_git_branch)
+             VALUES (?1, 5, 5, 0, ?2, ?2, ?3, ?4)",
+            rusqlite::params![command, last_seen, git_root, git_branch],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn same_branch_boosts_command_from_current_repository_and_branch() {
+        let conn = db::open_in_memory().unwrap();
+        let now = now_unix();
+        seed_git_context(&conn, "deploy --feature", now, "/repo/a", "feature");
+        seed_git_context(&conn, "deploy --main", now, "/repo/a", "main");
+
+        let ctx = RankContext {
+            git_root: Some("/repo/a".to_string()),
+            git_branch: Some("feature".to_string()),
+            ..Default::default()
+        };
+        let results = search(&conn, "deploy", &ctx, &RankWeights::default(), 10).unwrap();
+
+        assert_eq!(results[0].command, "deploy --feature");
+    }
+
+    #[test]
+    fn same_branch_does_not_match_branch_name_from_another_repository() {
+        let conn = db::open_in_memory().unwrap();
+        let now = now_unix();
+        seed_git_context(&conn, "deploy --one", now, "/repo/b", "main");
+        seed_git_context(&conn, "deploy --two", now, "/repo/a", "feature");
+
+        let ctx = RankContext {
+            git_root: Some("/repo/a".to_string()),
+            git_branch: Some("main".to_string()),
+            ..Default::default()
+        };
+        let results = search(&conn, "deploy", &ctx, &RankWeights::default(), 10).unwrap();
+        let cross_repo = results
+            .iter()
+            .find(|candidate| candidate.command == "deploy --one")
+            .unwrap();
+        let other_branch = results
+            .iter()
+            .find(|candidate| candidate.command == "deploy --two")
+            .unwrap();
+
+        assert!((cross_repo.score - other_branch.score).abs() < 1e-9);
+    }
+
+    #[test]
+    fn non_git_context_does_not_apply_branch_boost() {
+        let conn = db::open_in_memory().unwrap();
+        let now = now_unix();
+        seed_git_context(&conn, "deploy --one", now, "/repo/a", "main");
+        seed(&conn, "deploy --two", 5, 5, now, None);
+
+        let results = search(
+            &conn,
+            "deploy",
+            &RankContext::default(),
+            &RankWeights::default(),
+            10,
+        )
+        .unwrap();
+        let git_command = results
+            .iter()
+            .find(|candidate| candidate.command == "deploy --one")
+            .unwrap();
+        let plain_command = results
+            .iter()
+            .find(|candidate| candidate.command == "deploy --two")
+            .unwrap();
+
+        assert!((git_command.score - plain_command.score).abs() < 1e-9);
     }
 
     #[test]

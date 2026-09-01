@@ -15,13 +15,14 @@ const MAX_ROWS: usize = 10;
 pub fn run(args: &Args) -> i32 {
     let query = args.get_owned("query").unwrap_or_default();
     let cwd = args.get_owned("cwd");
-    let git_root = cwd
+    let git = cwd
         .as_deref()
         .map(|c| detect_git_context(Path::new(c)))
         .unwrap_or_default();
     let ctx = RankContext {
         cwd,
-        git_root: git_root.root,
+        git_root: git.root,
+        git_branch: git.branch,
         prev_key: None,
     };
 

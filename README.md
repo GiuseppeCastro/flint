@@ -41,9 +41,12 @@ from every command you run afterward — no further setup needed.
 | `Tab`                 | Unchanged — normal Zsh completion          |
 
 Ranking blends prefix/fuzzy match quality, frequency, recency, current
-directory and git repo/branch, learned command-sequence transitions (e.g.
+directory, git repo/branch, learned command-sequence transitions (e.g.
 `git add` → `git commit`), success rate, and past suggestion acceptance —
 all computed locally in a few milliseconds.
+
+To turn off the branch boost, set `same_branch = 0` under `[ranking]` in
+`~/.flint/config.toml`.
 
 `flint status` shows a quick summary; `flint doctor` diagnoses integration or
 performance issues; `flint stats` lists your most-used commands.

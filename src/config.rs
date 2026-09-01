@@ -16,6 +16,7 @@ pub struct RankWeights {
     pub recency: f64,
     pub same_cwd: f64,
     pub same_repo: f64,
+    pub same_branch: f64,
     pub transition: f64,
     pub success_rate: f64,
     pub acceptance: f64,
@@ -30,6 +31,7 @@ impl Default for RankWeights {
             recency: 2.5,
             same_cwd: 1.5,
             same_repo: 3.0,
+            same_branch: 2.0,
             transition: 4.0,
             success_rate: 1.5,
             acceptance: 1.0,
@@ -90,6 +92,7 @@ impl Config {
             recency: get_f64(&raw, "ranking.recency", w.recency),
             same_cwd: get_f64(&raw, "ranking.same_cwd", w.same_cwd),
             same_repo: get_f64(&raw, "ranking.same_repo", w.same_repo),
+            same_branch: get_f64(&raw, "ranking.same_branch", w.same_branch),
             transition: get_f64(&raw, "ranking.transition", w.transition),
             success_rate: get_f64(&raw, "ranking.success_rate", w.success_rate),
             acceptance: get_f64(&raw, "ranking.acceptance", w.acceptance),
@@ -129,6 +132,7 @@ pub const DEFAULT_CONFIG_TEMPLATE: &str = r#"# flint configuration. All settings
 # recency = 2.5
 # same_cwd = 1.5
 # same_repo = 3.0
+# same_branch = 2.0
 # transition = 4.0
 # success_rate = 1.5
 # acceptance = 1.0
@@ -159,6 +163,7 @@ mod tests {
 [ranking]
 prefix = 10.0
 recency = 0
+same_branch = 7.5
 
 [history]
 max_records = 50000
@@ -169,6 +174,7 @@ ignore_patterns = ["^secret-cmd", "foo.*bar"]
         let cfg = Config::parse(text);
         assert_eq!(cfg.weights.prefix, 10.0);
         assert_eq!(cfg.weights.recency, 0.0);
+        assert_eq!(cfg.weights.same_branch, 7.5);
         assert_eq!(cfg.max_history_records, 50_000);
         assert_eq!(
             cfg.ignore_patterns,
