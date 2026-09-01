@@ -210,6 +210,57 @@ fn transition_context_promotes_learned_next_command() {
 }
 
 #[test]
+fn suggest_uses_current_git_branch_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let git_dir = dir.path().join(".git");
+    std::fs::create_dir(&git_dir).unwrap();
+    std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
+
+    let out = flint(
+        dir.path(),
+        &[
+            "record",
+            "--command",
+            "deploy --feature",
+            "--cwd",
+            dir.path().to_str().unwrap(),
+            "--exit-code",
+            "0",
+        ],
+    );
+    assert!(out.status.success());
+
+    std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    let out = flint(
+        dir.path(),
+        &[
+            "record",
+            "--command",
+            "deploy --main",
+            "--cwd",
+            dir.path().to_str().unwrap(),
+            "--exit-code",
+            "0",
+        ],
+    );
+    assert!(out.status.success());
+
+    std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
+    let out = flint(
+        dir.path(),
+        &[
+            "suggest",
+            "--prefix",
+            "deploy",
+            "--cwd",
+            dir.path().to_str().unwrap(),
+        ],
+    );
+    assert!(out.status.success());
+    assert_eq!(stdout(&out), " --feature");
+}
+
+#[test]
 fn unknown_subcommand_exits_nonzero() {
     let dir = tempfile::tempdir().unwrap();
     let out = flint(dir.path(), &["bogus-command"]);

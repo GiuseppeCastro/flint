@@ -20,7 +20,7 @@ pub fn run(args: &Args) -> i32 {
     };
 
     let cwd = args.get("cwd");
-    let git_root = cwd
+    let git = cwd
         .map(|c| detect_git_context(Path::new(c)))
         .unwrap_or_default();
     let prev_key = args
@@ -30,7 +30,8 @@ pub fn run(args: &Args) -> i32 {
 
     let ctx = RankContext {
         cwd: cwd.map(str::to_string),
-        git_root: git_root.root,
+        git_root: git.root,
+        git_branch: git.branch,
         prev_key,
     };
 
